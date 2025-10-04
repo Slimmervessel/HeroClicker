@@ -1,0 +1,202 @@
+name: Build iOS App
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+        
+    - name: Create Xcode Project
+      run: |
+        mkdir -p HeroClicker
+        cd HeroClicker
+        
+        # Create project structure
+        mkdir -p HeroClicker
+        mkdir -p HeroClicker/Assets.xcassets/AppIcon.appiconset
+        mkdir -p HeroClicker/Assets.xcassets/hero.imageset
+        
+        # Copy source files
+        cp ../AppDelegate.swift HeroClicker/
+        cp ../ViewController.swift HeroClicker/
+        cp ../Info.plist HeroClicker/
+        
+        # Copy hero image if exists
+        if [ -f ../hero.png ]; then
+          cp ../hero.png HeroClicker/Assets.xcassets/hero.imageset/
+          cat > HeroClicker/Assets.xcassets/hero.imageset/Contents.json << 'EOF'
+        {
+          "images" : [
+            {
+              "filename" : "hero.png",
+              "idiom" : "universal",
+              "scale" : "1x"
+            },
+            {
+              "idiom" : "universal",
+              "scale" : "2x"
+            },
+            {
+              "idiom" : "universal",
+              "scale" : "3x"
+            }
+          ],
+          "info" : {
+            "author" : "xcode",
+            "version" : 1
+          }
+        }
+        EOF
+        fi
+        
+        # Create AppIcon Contents.json
+        cat > HeroClicker/Assets.xcassets/AppIcon.appiconset/Contents.json << 'EOF'
+        {
+          "images" : [
+            {
+              "idiom" : "iphone",
+              "scale" : "2x",
+              "size" : "20x20"
+            },
+            {
+              "idiom" : "iphone",
+              "scale" : "3x",
+              "size" : "20x20"
+            },
+            {
+              "idiom" : "iphone",
+              "scale" : "2x",
+              "size" : "29x29"
+            },
+            {
+              "idiom" : "iphone",
+              "scale" : "3x",
+              "size" : "29x29"
+            },
+            {
+              "idiom" : "iphone",
+              "scale" : "2x",
+              "size" : "40x40"
+            },
+            {
+              "idiom" : "iphone",
+              "scale" : "3x",
+              "size" : "40x40"
+            },
+            {
+              "idiom" : "iphone",
+              "scale" : "2x",
+              "size" : "60x60"
+            },
+            {
+              "idiom" : "iphone",
+              "scale" : "3x",
+              "size" : "60x60"
+            },
+            {
+              "idiom" : "ios-marketing",
+              "scale" : "1x",
+              "size" : "1024x1024"
+            }
+          ],
+          "info" : {
+            "author" : "xcode",
+            "version" : 1
+          }
+        }
+        EOF
+        
+        # Create Assets.xcassets Contents.json
+        cat > HeroClicker/Assets.xcassets/Contents.json << 'EOF'
+        {
+          "info" : {
+            "author" : "xcode",
+            "version" : 1
+          }
+        }
+        EOF
+        
+        # Create Xcode project using ruby script
+        ruby << 'RUBY'
+        require 'xcodeproj'
+        
+        project = Xcodeproj::Project.new('HeroClicker.xcodeproj')
+        target = project.new_target(:application, 'HeroClicker', :ios, '13.0')
+        
+        # Add files to project
+        group = project.main_group.new_group('HeroClicker')
+        
+        app_delegate = group.new_file('HeroClicker/AppDelegate.swift')
+        view_controller = group.new_file('HeroClicker/ViewController.swift')
+        info_plist = group.new_file('HeroClicker/Info.plist')
+        assets = group.new_file('HeroClicker/Assets.xcassets')
+        
+        target.add_file_references([app_delegate, view_controller])
+        target.add_resources([assets])
+        
+        # Set build settings
+        target.build_configurations.each do |config|
+          config.build_settings['PRODUCT_NAME'] = 'HeroClicker'
+          config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.github.heroclicker'
+          config.build_settings['INFOPLIST_FILE'] = 'HeroClicker/Info.plist'
+          config.build_settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
+          config.build_settings['TARGETED_DEVICE_FAMILY'] = '1'
+          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+          config.build_settings['CODE_SIGN_IDENTITY'] = ''
+          config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+          config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+        end
+        
+        project.save
+        RUBY
+    
+    - name: Build IPA
+      run: |
+        cd HeroClicker
+        xcodebuild -project HeroClicker.xcodeproj \
+          -scheme HeroClicker \
+          -configuration Release \
+          -sdk iphoneos \
+          -derivedDataPath build \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGN_IDENTITY="" \
+          CODE_SIGN_ENTITLEMENTS="" \
+          DEVELOPMENT_TEAM=""
+        
+        # Create Payload folder
+        mkdir -p Payload
+        cp -r build/Build/Products/Release-iphoneos/HeroClicker.app Payload/
+        
+        # Create IPA
+        zip -r HeroClicker.ipa Payload
+        
+    - name: Upload IPA
+      uses: actions/upload-artifact@v3
+      with:
+        name: HeroClicker-IPA
+        path: HeroClicker/HeroClicker.ipa
+        
+    - name: Create Release
+      if: github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: Release v1.0.${{ github.run_number }}
+        files: HeroClicker/HeroClicker.ipa
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
