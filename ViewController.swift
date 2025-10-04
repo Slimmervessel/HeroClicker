@@ -1,15 +1,54 @@
 import UIKit
 
+@main
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    var window: UIWindow?
+    
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        window = UIWindow(frame: UIScreen.main.bounds)
+        window?.rootViewController = ViewController()
+        window?.makeKeyAndVisible()
+        return true
+    }
+}
+
+struct Upgrade {
+    let name: String
+    let icon: String
+    var baseCost: Int
+    var bpsIncrease: Double
+    var owned: Int = 0
+    
+    var currentCost: Int {
+        return Int(Double(baseCost) * pow(1.15, Double(owned)))
+    }
+}
+
 class ViewController: UIViewController {
     
     var clickCount: Int = 0 {
-        didSet { UserDefaults.standard.set(clickCount, forKey: "clickCount") }
+        didSet { 
+            UserDefaults.standard.set(clickCount, forKey: "clickCount")
+            updateLabels()
+            upgradesTableView.reloadData()
+        }
     }
     var totalClicks: Int = 0 {
         didSet { UserDefaults.standard.set(totalClicks, forKey: "totalClicks") }
     }
+    var boogermanPerSecond: Double = 0
     var clickTimes: [Date] = []
     var cpsTimer: Timer?
+    var passiveIncomeTimer: Timer?
+    
+    var upgrades: [Upgrade] = [
+        Upgrade(name: "Cursor", icon: "👆", baseCost: 15, bpsIncrease: 0.1),
+        Upgrade(name: "Booger Jar", icon: "🫙", baseCost: 100, bpsIncrease: 1),
+        Upgrade(name: "Tissue Box", icon: "🧻", baseCost: 1100, bpsIncrease: 8),
+        Upgrade(name: "Nose Picker", icon: "👃", baseCost: 12000, bpsIncrease: 47),
+        Upgrade(name: "Sneeze Factory", icon: "🤧", baseCost: 130000, bpsIncrease: 260),
+        Upgrade(name: "Mucus Mine", icon: "⛏️", baseCost: 1400000, bpsIncrease: 1400)
+    ]
     
     let heroImageView: UIImageView = {
         let iv = UIImageView()
@@ -21,7 +60,7 @@ class ViewController: UIViewController {
     
     let scoreLabel: UILabel = {
         let label = UILabel()
-        label.font = UIFont.boldSystemFont(ofSize: 36)
+        label.font = UIFont.boldSystemFont(ofSize: 28)
         label.textAlignment = .center
         label.textColor = .white
         label.shadowColor = .black
@@ -30,9 +69,20 @@ class ViewController: UIViewController {
         return label
     }()
     
+    let bpsLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        label.textAlignment = .center
+        label.textColor = .cyan
+        label.shadowColor = .black
+        label.shadowOffset = CGSize(width: 1, height: 1)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
     let cpsLabel: UILabel = {
         let label = UILabel()
-        label.font = UIFont.systemFont(ofSize: 20, weight: .semibold)
+        label.font = UIFont.systemFont(ofSize: 14)
         label.textAlignment = .center
         label.textColor = .yellow
         label.shadowColor = .black
@@ -41,28 +91,21 @@ class ViewController: UIViewController {
         return label
     }()
     
-    let totalLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont.systemFont(ofSize: 18)
-        label.textAlignment = .center
-        label.textColor = UIColor.white.withAlphaComponent(0.9)
-        label.shadowColor = .black
-        label.shadowOffset = CGSize(width: 1, height: 1)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
+    let upgradesTableView: UITableView = {
+        let tv = UITableView()
+        tv.backgroundColor = UIColor.black.withAlphaComponent(0.3)
+        tv.separatorColor = UIColor.white.withAlphaComponent(0.2)
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        return tv
     }()
     
     let resetButton: UIButton = {
         let button = UIButton(type: .system)
-        button.setTitle("🔄 Reset", for: .normal)
-        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 18)
+        button.setTitle("🔄", for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 24)
         button.setTitleColor(.white, for: .normal)
         button.backgroundColor = UIColor.systemRed.withAlphaComponent(0.8)
-        button.layer.cornerRadius = 12
-        button.layer.shadowColor = UIColor.black.cgColor
-        button.layer.shadowOffset = CGSize(width: 0, height: 2)
-        button.layer.shadowOpacity = 0.3
-        button.layer.shadowRadius = 4
+        button.layer.cornerRadius = 25
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
@@ -70,25 +113,49 @@ class ViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        clickCount = UserDefaults.standard.integer(forKey: "clickCount")
-        totalClicks = UserDefaults.standard.integer(forKey: "totalClicks")
-        
+        loadGameData()
         setupBackground()
         setupImage()
+        setupTableView()
         setupLayout()
         setupGestures()
         updateLabels()
-        startCPSTimer()
+        startTimers()
+    }
+    
+    func loadGameData() {
+        clickCount = UserDefaults.standard.integer(forKey: "clickCount")
+        totalClicks = UserDefaults.standard.integer(forKey: "totalClicks")
+        
+        if let upgradesData = UserDefaults.standard.data(forKey: "upgrades"),
+           let decoded = try? JSONDecoder().decode([UpgradeData].self, from: upgradesData) {
+            for (index, data) in decoded.enumerated() {
+                if index < upgrades.count {
+                    upgrades[index].owned = data.owned
+                }
+            }
+        }
+        
+        calculateBPS()
+    }
+    
+    func saveGameData() {
+        let upgradesData = upgrades.map { UpgradeData(owned: $0.owned) }
+        if let encoded = try? JSONEncoder().encode(upgradesData) {
+            UserDefaults.standard.set(encoded, forKey: "upgrades")
+        }
+    }
+    
+    func calculateBPS() {
+        boogermanPerSecond = upgrades.reduce(0) { $0 + ($1.bpsIncrease * Double($1.owned)) }
     }
     
     func setupBackground() {
         let gradientLayer = CAGradientLayer()
         gradientLayer.colors = [
-            UIColor(red: 0.8, green: 0.5, blue: 0.1, alpha: 1).cgColor,
-            UIColor(red: 0.6, green: 0.35, blue: 0.05, alpha: 1).cgColor,
-            UIColor(red: 0.4, green: 0.25, blue: 0.05, alpha: 1).cgColor
+            UIColor(red: 0.0, green: 0.6, blue: 0.7, alpha: 1).cgColor,
+            UIColor(red: 0.0, green: 0.4, blue: 0.5, alpha: 1).cgColor
         ]
-        gradientLayer.locations = [0.0, 0.5, 1.0]
         gradientLayer.frame = view.bounds
         view.layer.insertSublayer(gradientLayer, at: 0)
     }
@@ -97,14 +164,14 @@ class ViewController: UIViewController {
         if let image = UIImage(named: "hero") {
             heroImageView.image = image
         } else {
-            heroImageView.backgroundColor = UIColor.green.withAlphaComponent(0.3)
+            heroImageView.backgroundColor = UIColor.orange.withAlphaComponent(0.3)
             heroImageView.layer.cornerRadius = 20
             heroImageView.layer.borderWidth = 3
             heroImageView.layer.borderColor = UIColor.yellow.cgColor
             
             let label = UILabel()
             label.text = "B"
-            label.font = UIFont.boldSystemFont(ofSize: 120)
+            label.font = UIFont.boldSystemFont(ofSize: 80)
             label.textColor = .yellow
             label.textAlignment = .center
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -117,6 +184,12 @@ class ViewController: UIViewController {
         }
     }
     
+    func setupTableView() {
+        upgradesTableView.delegate = self
+        upgradesTableView.dataSource = self
+        upgradesTableView.register(UpgradeCell.self, forCellReuseIdentifier: "UpgradeCell")
+    }
+    
     func setupGestures() {
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(heroTapped))
         heroImageView.addGestureRecognizer(tapGesture)
@@ -124,32 +197,36 @@ class ViewController: UIViewController {
     }
     
     func setupLayout() {
-        view.addSubview(heroImageView)
         view.addSubview(scoreLabel)
+        view.addSubview(bpsLabel)
         view.addSubview(cpsLabel)
-        view.addSubview(totalLabel)
+        view.addSubview(heroImageView)
+        view.addSubview(upgradesTableView)
         view.addSubview(resetButton)
         
         NSLayoutConstraint.activate([
-            scoreLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            scoreLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             scoreLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            scoreLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            scoreLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
             
-            cpsLabel.topAnchor.constraint(equalTo: scoreLabel.bottomAnchor, constant: 10),
+            bpsLabel.topAnchor.constraint(equalTo: scoreLabel.bottomAnchor, constant: 5),
+            bpsLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            
+            cpsLabel.topAnchor.constraint(equalTo: bpsLabel.bottomAnchor, constant: 3),
             cpsLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             
-            totalLabel.topAnchor.constraint(equalTo: cpsLabel.bottomAnchor, constant: 5),
-            totalLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            
+            heroImageView.topAnchor.constraint(equalTo: cpsLabel.bottomAnchor, constant: 10),
             heroImageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            heroImageView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 20),
-            heroImageView.widthAnchor.constraint(equalToConstant: 280),
-            heroImageView.heightAnchor.constraint(equalToConstant: 380),
+            heroImageView.widthAnchor.constraint(equalToConstant: 200),
+            heroImageView.heightAnchor.constraint(equalToConstant: 200),
             
-            resetButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -30),
-            resetButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            resetButton.widthAnchor.constraint(equalToConstant: 140),
+            upgradesTableView.topAnchor.constraint(equalTo: heroImageView.bottomAnchor, constant: 15),
+            upgradesTableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            upgradesTableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            upgradesTableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            
+            resetButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            resetButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -15),
+            resetButton.widthAnchor.constraint(equalToConstant: 50),
             resetButton.heightAnchor.constraint(equalToConstant: 50)
         ])
     }
@@ -159,15 +236,14 @@ class ViewController: UIViewController {
         totalClicks += 1
         clickTimes.append(Date())
         
-        updateLabels()
         animateTap()
         createParticle()
         addHapticFeedback()
     }
     
     func updateLabels() {
-        scoreLabel.text = "⭐️ \(clickCount.formatted()) ⭐️"
-        totalLabel.text = "Total: \(totalClicks.formatted())"
+        scoreLabel.text = "Boogerman: \(clickCount.formatted())"
+        bpsLabel.text = String(format: "Boogerman per second: %.1f", boogermanPerSecond)
     }
     
     func animateTap() {
@@ -182,20 +258,20 @@ class ViewController: UIViewController {
     
     func createParticle() {
         let particle = UILabel()
-        particle.text = ["+1", "💥", "⚡️", "✨"].randomElement()!
-        particle.font = UIFont.boldSystemFont(ofSize: 28)
-        particle.textColor = .yellow
+        particle.text = ["+1", "💚", "🤢", "✨"].randomElement()!
+        particle.font = UIFont.boldSystemFont(ofSize: 24)
+        particle.textColor = .green
         particle.shadowColor = .black
         particle.shadowOffset = CGSize(width: 1, height: 1)
         
-        let randomX = heroImageView.center.x + CGFloat.random(in: -60...60)
+        let randomX = heroImageView.center.x + CGFloat.random(in: -40...40)
         particle.center = CGPoint(x: randomX, y: heroImageView.center.y)
         view.addSubview(particle)
         
-        UIView.animate(withDuration: 1.2, delay: 0, options: .curveEaseOut, animations: {
-            particle.center.y -= 120
+        UIView.animate(withDuration: 1.0, delay: 0, options: .curveEaseOut, animations: {
+            particle.center.y -= 80
             particle.alpha = 0
-            particle.transform = CGAffineTransform(scaleX: 1.5, y: 1.5)
+            particle.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
         }) { _ in
             particle.removeFromSuperview()
         }
@@ -206,9 +282,13 @@ class ViewController: UIViewController {
         generator.impactOccurred()
     }
     
-    func startCPSTimer() {
+    func startTimers() {
         cpsTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.updateCPS()
+        }
+        
+        passiveIncomeTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            self?.addPassiveIncome()
         }
     }
     
@@ -216,13 +296,19 @@ class ViewController: UIViewController {
         let now = Date()
         clickTimes = clickTimes.filter { now.timeIntervalSince($0) <= 1.0 }
         let cps = Double(clickTimes.count)
-        cpsLabel.text = String(format: "⚡️ %.1f CPS", cps)
+        cpsLabel.text = String(format: "Click Power: +%.0f", cps)
+    }
+    
+    func addPassiveIncome() {
+        if boogermanPerSecond > 0 {
+            clickCount += Int(boogermanPerSecond * 0.1)
+        }
     }
     
     @objc func resetGame() {
         let alert = UIAlertController(
             title: "Reset Game?",
-            message: "This will reset your score to 0. Total clicks will also be reset.",
+            message: "This will reset everything including upgrades!",
             preferredStyle: .alert
         )
         
@@ -238,12 +324,15 @@ class ViewController: UIViewController {
         clickCount = 0
         totalClicks = 0
         clickTimes.removeAll()
-        updateLabels()
-        cpsLabel.text = "⚡️ 0.0 CPS"
         
-        UIView.animate(withDuration: 0.3) {
-            self.heroImageView.transform = CGAffineTransform(rotationAngle: .pi * 2)
+        for i in 0..<upgrades.count {
+            upgrades[i].owned = 0
         }
+        
+        calculateBPS()
+        saveGameData()
+        updateLabels()
+        upgradesTableView.reloadData()
     }
     
     override func viewWillLayoutSubviews() {
@@ -255,7 +344,138 @@ class ViewController: UIViewController {
     
     deinit {
         cpsTimer?.invalidate()
+        passiveIncomeTimer?.invalidate()
     }
+}
+
+extension ViewController: UITableViewDelegate, UITableViewDataSource {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return upgrades.count
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "UpgradeCell", for: indexPath) as! UpgradeCell
+        let upgrade = upgrades[indexPath.row]
+        let canAfford = clickCount >= upgrade.currentCost
+        cell.configure(with: upgrade, canAfford: canAfford)
+        return cell
+    }
+    
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        return 80
+    }
+    
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        
+        let upgrade = upgrades[indexPath.row]
+        
+        if clickCount >= upgrade.currentCost {
+            clickCount -= upgrade.currentCost
+            upgrades[indexPath.row].owned += 1
+            calculateBPS()
+            saveGameData()
+            
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+            
+            tableView.reloadRows(at: [indexPath], with: .fade)
+        } else {
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+        }
+    }
+}
+
+class UpgradeCell: UITableViewCell {
+    
+    let iconLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.systemFont(ofSize: 40)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    let nameLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.boldSystemFont(ofSize: 16)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    let bpsLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.systemFont(ofSize: 12)
+        label.textColor = .cyan
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    let costLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.boldSystemFont(ofSize: 14)
+        label.textColor = .yellow
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    let ownedLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.systemFont(ofSize: 18)
+        label.textColor = .white
+        label.textAlignment = .right
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        
+        backgroundColor = .clear
+        
+        contentView.addSubview(iconLabel)
+        contentView.addSubview(nameLabel)
+        contentView.addSubview(bpsLabel)
+        contentView.addSubview(costLabel)
+        contentView.addSubview(ownedLabel)
+        
+        NSLayoutConstraint.activate([
+            iconLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 15),
+            iconLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            
+            nameLabel.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 15),
+            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 15),
+            
+            bpsLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            bpsLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+            
+            costLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            costLabel.topAnchor.constraint(equalTo: bpsLabel.bottomAnchor, constant: 2),
+            
+            ownedLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -15),
+            ownedLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            ownedLabel.widthAnchor.constraint(equalToConstant: 60)
+        ])
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func configure(with upgrade: Upgrade, canAfford: Bool) {
+        iconLabel.text = upgrade.icon
+        nameLabel.text = upgrade.name
+        bpsLabel.text = String(format: "+%.1f BPS", upgrade.bpsIncrease)
+        costLabel.text = "💰 \(upgrade.currentCost.formatted())"
+        ownedLabel.text = "\(upgrade.owned)"
+        
+        contentView.alpha = canAfford ? 1.0 : 0.5
+    }
+}
+
+struct UpgradeData: Codable {
+    let owned: Int
 }
 
 extension Int {
